@@ -1,0 +1,58 @@
+name: forex-alert-bot
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"      # every 30 minutes (UTC). GitHub may delay runs by several minutes.
+  workflow_dispatch:            # lets you press "Run workflow" manually
+    inputs:
+      mode:
+        description: "scan = normal run, check = only test the data feed"
+        type: choice
+        default: scan
+        options:
+          - scan
+          - check
+
+permissions:
+  contents: write               # needed to save alert_state.json back to the repo
+
+concurrency:
+  group: fxbot
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Scan markets and send alerts
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USER: ${{ secrets.TV_USER }}
+          TV_PASS: ${{ secrets.TV_PASS }}
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "check" ]; then
+            python forex_alert_bot.py --check
+          else
+            python forex_alert_bot.py --once
+          fi
+
+      - name: Save memory of sent alerts
+        run: |
+          [ -f alert_state.json ] || echo "{}" > alert_state.json
+          date -u +%F > heartbeat.txt
+          git config user.name "fxbot"
+          git config user.email "fxbot@users.noreply.github.com"
+          git add alert_state.json heartbeat.txt
+          git diff --staged --quiet || (git commit -m "update state" && git push)
