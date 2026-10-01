@@ -2,16 +2,22 @@ name: forex-alert-bot
 
 on:
   schedule:
-    - cron: "*/30 * * * *"      # every 30 minutes (UTC). GitHub may delay runs by several minutes.
+    # All times are UTC. H4 candles close at 01, 05, 09, 13, 17 and 21 UTC (02, 06, 10, 14, 18 and 22 in Lagos).
+    # Right after each close the bot checks six times (minutes 02, 07, 12, 17, 27, 42), so the alert goes out
+    # as soon as GitHub starts one of these runs. A run with no new H4 candle ends in seconds.
+    - cron: "2,7,12,17,27,42 1,5,9,13,17,21 * * *"
+    # Safety net for symbols whose H4 candles close at a different time (for example gold): once an hour.
+    - cron: "32 * * * *"
   workflow_dispatch:            # lets you press "Run workflow" manually
     inputs:
       mode:
-        description: "scan = normal run, check = only test the data feed"
+        description: "scan = normal run | check = test the data feed | baseline = mark current setups as seen, send nothing"
         type: choice
         default: scan
         options:
           - scan
           - check
+          - baseline
 
 permissions:
   contents: write               # needed to save alert_state.json back to the repo
@@ -23,7 +29,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -35,18 +41,18 @@ jobs:
       - name: Install packages
         run: pip install -r requirements.txt
 
-      - name: Scan markets and send alerts
+      - name: Run the bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TV_USER: ${{ secrets.TV_USER }}
           TV_PASS: ${{ secrets.TV_PASS }}
         run: |
-          if [ "${{ github.event.inputs.mode }}" = "check" ]; then
-            python forex_alert_bot.py --check
-          else
-            python forex_alert_bot.py --once
-          fi
+          case "${{ github.event.inputs.mode }}" in
+            check) python forex_alert_bot.py --check ;;
+            baseline) python forex_alert_bot.py --baseline ;;
+            *) python forex_alert_bot.py --once ;;
+          esac
 
       - name: Save memory of sent alerts
         run: |
